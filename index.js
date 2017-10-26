@@ -1,453 +1,177 @@
-"use strict";
+const login = require("facebook-chat-api");
+var UserID="";
+var temp = 0;
+var request = require("request");
+var Ten ="";
+var beauty ="";
+var Nguoiquen = true;
+var first = "";
+var today = new Date();
+var h = today.getHours();
+var IDbot = "986172468121343";
+var botweather = "https://query.yahooapis.com/v1/public/yql?q=select%20*%20from%20weather.forecast%20where%20woeid%3D1252431%20and%20u%20%3D%22c%22%20&format=json&diagnostics=true&callback=";
+const readline = require("readline");
+var rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
 
-var utils = require("./utils");
-var cheerio = require("cheerio");
-var log = require("npmlog");
 
-var defaultLogRecordSize = 100;
-log.maxRecordSize = defaultLogRecordSize;
 
-function setOptions(globalOptions, options) {
-  Object.keys(options).map(function(key) {
-    switch (key) {
-      case 'logLevel':
-        log.level = options.logLevel;
-        globalOptions.logLevel = options.logLevel;
-        break;
-      case 'logRecordSize':
-        log.maxRecordSize = options.logRecordSize;
-        globalOptions.logRecordSize = options.logRecordSize;
-        break;
-      case 'selfListen':
-        globalOptions.selfListen = options.selfListen;
-        break;
-      case 'listenEvents':
-        globalOptions.listenEvents = options.listenEvents;
-        break;
-      case 'pageID':
-        globalOptions.pageID = options.pageID.toString();
-        break;
-      case 'updatePresence':
-        globalOptions.updatePresence = options.updatePresence;
-        break;
-      case 'forceLogin':
-        globalOptions.forceLogin = options.forceLogin;
-        break;
-      default:
-        log.warn("setOptions", "Unrecognized option given to setOptions: " + key);
-        break;
+login({email: "minhnghia.nguyencong", password: "TeaPeps!"}, (err, api) => 
+{
+    if(err) 
+    {
+        switch (err.error) 
+        {
+            case 'login-approval':
+                console.log('Enter code > ');
+                rl.on('line', (line) => 
+                {
+                    err.continue(line);
+                    rl.close();
+                });
+                break;
+            default:
+                console.error(err);
+        }
+        return;
     }
-  });
-}
-
-function buildAPI(globalOptions, html, jar) {
-  var maybeCookie = jar.getCookies("https://www.facebook.com").filter(function(val) {
-    return val.cookieString().split("=")[0] === "c_user";
-  });
-
-  if(maybeCookie.length === 0) {
-    throw {error: "Error retrieving userID. This can be caused by a lot of things, including getting blocked by Facebook for logging in from an unknown location. Try logging in with a browser to verify."};
-  }
-
-  var userID = maybeCookie[0].cookieString().split("=")[1].toString();
-  log.info("login", "Logged in");
-
-  var clientID = (Math.random() * 2147483648 | 0).toString(16);
-
-  // All data available to api functions
-  var ctx = {
-    userID: userID,
-    jar: jar,
-    clientID: clientID,
-    globalOptions: globalOptions,
-    loggedIn: true,
-    access_token: 'NONE',
-    clientMutationId: 0
-  };
-
-  var api = {
-    setOptions: setOptions.bind(null, globalOptions),
-    getAppState: function getAppState() {
-      return utils.getAppState(jar);
-    },
-  };
-
-  var apiFuncNames = [
-    'addUserToGroup',
-    'changeArchivedStatus',
-    'changeBlockedStatus',
-    'changeGroupImage',
-    'changeThreadColor',
-    'changeThreadEmoji',
-    'changeNickname',
-    'createPoll',
-    'deleteMessage',
-    'deleteThread',
-    'forwardAttachment',
-    'getCurrentUserID',
-    'getEmojiUrl',
-    'getFriendsList',
-    'getThreadHistory',
-    'getThreadInfo',
-    'getThreadList',
-    'getThreadPictures',
-    'getUserID',
-    'getUserInfo',
-    'threadColors',
-    'handleMessageRequest',
-    'listen',
-    'logout',
-    'markAsRead',
-    'muteThread',
-    'removeUserFromGroup',
-    'resolvePhotoUrl',
-    'searchForThread',
-    'sendMessage',
-    'sendTypingIndicator',
-    'setMessageReaction',
-    'setTitle',
     
-    // Beta features
-    'getThreadHistoryGraphQL',
-    'getThreadInfoGraphQL',
-  ];
-
-  var defaultFuncs = utils.makeDefaults(html, userID, ctx);
-
-  // Load all api functions in a loop
-  apiFuncNames.map(function(v) {
-    api[v] = require('./src/' + v)(defaultFuncs, api, ctx);
-  });
-
-  return [ctx, defaultFuncs, api];
-}
-
-function makeLogin(jar, email, password, loginOptions, callback) {
-  return function(res) {
-    var html = res.body;
-    var $ = cheerio.load(html);
-    var arr = [];
-
-    // This will be empty, but just to be sure we leave it
-    $("#login_form input").map(function(i, v){
-      arr.push({val: $(v).val(), name: $(v).attr("name")});
-    });
-
-    arr = arr.filter(function(v) {
-      return v.val && v.val.length;
-    });
-
-    var form = utils.arrToForm(arr);
-    form.lsd = utils.getFrom(html, "[\"LSD\",[],{\"token\":\"", "\"}");
-    form.lgndim = new Buffer("{\"w\":1440,\"h\":900,\"aw\":1440,\"ah\":834,\"c\":24}").toString('base64');
-    form.email = email;
-    form.pass = password;
-    form.default_persistent = '0';
-    form.lgnrnd = utils.getFrom(html, "name=\"lgnrnd\" value=\"", "\"");
-    form.locale = 'en_US';
-    form.timezone = '240';
-    form.lgnjs = ~~(Date.now() / 1000);
-
-
-    // Getting cookies from the HTML page... (kill me now plz)
-    // we used to get a bunch of cookies in the headers of the response of the
-    // request, but FB changed and they now send those cookies inside the JS.
-    // They run the JS which then injects the cookies in the page.
-    // The "solution" is to parse through the html and find those cookies
-    // which happen to be conveniently indicated with a _js_ in front of their
-    // variable name.
-    //
-    // ---------- Very Hacky Part Starts -----------------
-    var willBeCookies = html.split("\"_js_");
-    willBeCookies.slice(1).map(function(val) {
-      var cookieData = JSON.parse("[\"" + utils.getFrom(val, "", "]") + "]");
-      jar.setCookie(utils.formatCookie(cookieData, "facebook"), "https://www.facebook.com");
-    });
-    // ---------- Very Hacky Part Ends -----------------
-
-    log.info("login", "Logging in...");
-    return utils
-      .post("https://www.facebook.com/login.php?login_attempt=1&lwv=110", jar, form)
-      .then(utils.saveCookies(jar))
-      .then(function(res) {
-        var headers = res.headers;
-        if (!headers.location) {
-          throw {error: "Wrong username/password."};
-        }
-
-        // This means the account has login approvals turned on.
-        if (headers.location.indexOf('https://www.facebook.com/checkpoint/') > -1) {
-          var nextURL = 'https://www.facebook.com/checkpoint/?next=https%3A%2F%2Fwww.facebook.com%2Fhome.php';
-
-          return utils
-            .get(headers.location, jar)
-            .then(utils.saveCookies(jar))
-            .then(function(res) {
-              var html = res.body;
-              // Make the form in advance which will contain the fb_dtsg and nh
-              var $ = cheerio.load(html);
-              var arr = [];
-              $("form input").map(function(i, v){
-                arr.push({val: $(v).val(), name: $(v).attr("name")});
-              });
-
-              arr = arr.filter(function(v) {
-                return v.val && v.val.length;
-              });
-
-              var form = utils.arrToForm(arr);
-              if (html.indexOf("Enter Security Code to Continue") > -1 ||
-                  html.indexOf("Enter Your Login Code") > -1) {
-                throw {
-                  error: 'login-approval',
-                  continue: function(code) {
-                    form.approvals_code = code;
-                    form['submit[Continue]'] = 'Continue';
-                    return utils
-                      .post(nextURL, jar, form)
-                      .then(utils.saveCookies(jar))
-                      .then(function() {
-                        // Use the same form (safe I hope)
-                        form.name_action_selected = 'save_device';
-
-                        return utils
-                          .post(nextURL, jar, form)
-                          .then(utils.saveCookies(jar));
-                      })
-                      .then(function(res) {
-                        var headers = res.headers;
-                        if (!headers.location && res.body.indexOf('Review Recent Login') > -1) {
-                          throw {error: "Something went wrong with login approvals."};
-                        }
-
-                        var appState = utils.getAppState(jar);
-
-                        // Simply call loginHelper because all it needs is the jar
-                        // and will then complete the login process
-                        return loginHelper(appState, email, password, loginOptions, callback);
-                      })
-                      .catch(function(err) {
-                        callback(err);
-                      });
-                  }
-                };
-              } else {
-                if (!loginOptions.forceLogin) {
-                  throw {error: "Couldn't login. Facebook might have blocked this account. Please login with a browser or enable the option 'forceLogin' and try again."};
+    var d = new Date();
+    var h =  d.getHours();
+    
+    api.listen((err, message) => {
+                if (message.senderID != IDbot)
+                    api.getUserInfo(message.senderID, function(err, ret) 
+                    {
+                        if (err) return console.error(err);
+                  	    for (var prop in ret) 
+                  		if (ret.hasOwnProperty(prop) && ret[prop].name) 
+                  	        console.log(ret[prop].name + ": "+message.body);
+                    });
+                    // console log
+                
+                if (typeof message.body == "string"&&(message.body.indexOf("Thời tiết") != -1||message.body.indexOf("thời tiết") != -1)&&(message.body.indexOf("hôm nay") != -1||message.body.indexOf( "Hôm nay")!= -1||message.body.indexOf("thế nào") != -1))
+                {
+                    request(botweather,  
+                    function(error,query, body)
+                    {  
+                    	if (error) api.sendMessage("Tao đang đơ, không trả lời được :)", message.threadID);
+                    	var ans = JSON.parse(body);
+                    	var temp = ans.query.results.channel.item.condition.temp;
+                    	var weather = ans.query.results.channel.item.condition.text;
+                    	var date = ans.query.results.channel.item.condition.date;
+                    	api.sendMessage("Date: " + date + "\nWeather: "+weather+"\nTemperature: "+temp+"°C",message.senderID);
+                    	
+                    	if (weather === "Rain" || weather === "Showers"||weather === "Rainy") 
+                    	    api.sendMessage("Bé điệu: Ra đường nhớ mang thêm áo mưa nhỏ nhé :) :)",message.senderID);
+                    	else if (weather === "Sun" || weather === "Sunny"|| weather === "Hot") 
+                    	    api.sendMessage("Bé điệu: Ra đường nhớ mang mũ nhé nắng lắm đấy coi chừng đen da hí hí!",message.senderID);
+                    	else if (weather === "Cool" || weather === "Freezing" || temp < 22) 
+                    	    api.sendMessage("Bé điệu: Trời dạo này lạnh rồi ra đường nhớ mang áo ấm đấy nhé <3<3<3",message.senderID);
+                    });
                 }
-                if (html.indexOf("Suspicious Login Attempt") > -1) {
-                  form['submit[This was me]'] = "This was me";
-                } else {
-                  form['submit[This Is Okay]'] = "This Is Okay";
+                
+                //API thời tiết
+                
+                else if (first != message.senderID && message.senderID != IDbot)
+                {	
+                	//api.sendMessage("Bé điệu: Tin nhắn được trả lời bởi bot "\bé điệu"\ dễ thương cute hột me!", message.senderID);
+                    switch (message.senderID)
+                	{
+                		case "100013425663113" : 
+                	    	  Ten = "É"; break;
+                		case "100008782805886" : 
+                		    Ten = "Phát Rẫy"; break;
+                		case "100005125536544" : 
+                  		    Ten = "chị Mai"; break;
+                  		case "100003197155600" : 
+                  		    Ten = "9 Tô"; break;
+                  		case "100007862672818" : 
+                  		    Ten = "Hằng lùn"; break;
+                  		case "100004645635674" : 
+                  		    Ten = "vi";	break;
+                  		case "100013696271630" : 
+                  		    Ten = "Beck đen"; break;
+                  		case "100005305591730" : 
+                  		    Ten = "Kiệt lu"; break;
+                  		case "100005937787223" : 
+                  		    Ten = "Nguyên đại ca"; break;
+                  		case "100004514681387" : 
+                  		    Ten = "Đinh ba phân"; break;
+                  		case "100004988885304" : 
+                  		    Ten = "Duy lai chinh"; break;
+                  		case "100005541483137" : 
+                  		    Ten = "Hải"; break;
+                  		case "100014580245024" : 
+                  		    Ten = "8 cá"; break;
+                  		case "100021404624867" : 
+                  		    Ten = "Dương cuteo"; break;
+                  		case "100004368812438" : 
+                  		    Ten = "chú Lí";	break;
+                  		case "100004894204003" : 
+                  		    Ten = "cu Bo"; break;
+                  		case "100004155730334" : 
+                  		    Ten = "cu Ti"; break;
+                  		case "100005157213354" : 
+                  		    Ten = "Diễm Trinh";	break;
+                  		case "100007549170993" : 
+                  		    Ten = "cu Duy";	break;
+                  		case "100014047218732" : 
+                  		    Ten = "Thơ thum thủm"; break;
+                  		case "100006258226840" : 
+                  		    Ten = "Nghĩa địa"; break;
+                  		
+                  		default: 
+                  		    Nguoiquen = false;
+                  	}
+                  	//User ID người quen
+                  	
+                    api.getUserInfo(message.senderID, function(err, ret) 
+                  	{
+                    	if (err) return console.error(err);
+                  		for (var prop in ret) 
+                  		{
+                  	   		if (ret.hasOwnProperty(prop) && ret[prop].name) 
+                  			{
+                  				first = message.senderID;
+                  				if (Nguoiquen === false) 
+                  				    Ten = ret[prop].firstName;
+                  				if (ret[prop].gender === 2) 
+                  				    beauty="đẹp trai"; 
+                  				else 
+                  				    beauty="xinh đẹp";
+                  				
+                  				api.sendMessage("Bé điệu: Chào " + Ten +" " + beauty+"!", prop, message.senderID);
+                  				
+                  			}
+                  		}
+                  	});
+                  	
+                  	UserID = message.senderID;
+                    api.sendMessage(message.body,IDbot);
+                    temp = 0;
                 }
+                else if (message.senderID != IDbot)
+                {
 
-                return utils
-                  .post(nextURL, jar, form)
-                  .then(utils.saveCookies(jar))
-                  .then(function() {
-                    // Use the same form (safe I hope)
-                    form.name_action_selected = 'save_device';
-
-                    return utils
-                      .post(nextURL, jar, form)
-                      .then(utils.saveCookies(jar));
-                  })
-                  .then(function(res) {
-                    var headers = res.headers;
-
-                    if (!headers.location && res.body.indexOf('Review Recent Login') > -1) {
-                      throw {error: "Something went wrong with review recent login."};
-                    }
-
-                    var appState = utils.getAppState(jar);
-
-                    // Simply call loginHelper because all it needs is the jar
-                    // and will then complete the login process
-                    return loginHelper(appState, email, password, loginOptions, callback);
-                  })
-                  .catch(function(e) {
-                    callback(e);
-                  });
-              }
-            });
-        }
-
-        return utils
-          .get('https://www.facebook.com/', jar)
-          .then(utils.saveCookies(jar));
-      });
-  };
-}
-
-// Helps the login
-function loginHelper(appState, email, password, globalOptions, callback) {
-  var mainPromise = null;
-  var jar = utils.getJar();
-
-  // If we're given an appState we loop through it and save each cookie
-  // back into the jar.
-  if(appState) {
-    appState.map(function(c) {
-      var str = c.key + "=" + c.value + "; expires=" + c.expires + "; domain=" + c.domain + "; path=" + c.path + ";";
-      jar.setCookie(str, "http://" + c.domain);
+                    UserID = message.senderID;
+                    api.sendMessage(message.body,IDbot);
+                    first = message.senderID;
+                }
+                else
+                { 
+                    if (temp === 0 )
+                    	{
+                    			if (h >= 8 && h <= 19) 
+                    			    api.sendMessage("Bé điệu: Nghĩa hiện giờ không on facebook!", UserID);
+                      			else 
+                      			    api.sendMessage("Bé điệu: Bạn ơi khuya lắm rồi đấy sao còn chưa ngủ?", UserID);
+                                temp = 1;
+                      	}
+                    api.sendMessage("Bé điệu: " + message.body,UserID)
+                }
     });
+});
 
-    // Load the main page.
-    mainPromise = utils
-      .get('https://www.facebook.com/', jar)
-      .then(utils.saveCookies(jar));
-  } else {
-    // Open the main page, then we login with the given credentials and finally
-    // load the main page again (it'll give us some IDs that we need)
-    mainPromise = utils
-      .get("https://www.facebook.com/", null)
-      .then(utils.saveCookies(jar))
-      .then(makeLogin(jar, email, password, globalOptions, callback))
-      .then(function() {
-        return utils
-          .get('https://www.facebook.com/', jar)
-          .then(utils.saveCookies(jar));
-      });
-  }
-
-  var ctx = null;
-  var defaultFuncs = null;
-  var api = null;
-
-  mainPromise = mainPromise
-    .then(function(res) {
-      var html = res.body;
-      var stuff = buildAPI(globalOptions, html, jar);
-      ctx = stuff[0];
-      defaultFuncs = stuff[1];
-      api = stuff[2];
-      return res;
-    })
-    .then(function() {
-      var form = {
-        reason: 6
-      };
-      log.info("login", 'Request to reconnect');
-      return defaultFuncs
-        .get("https://www.facebook.com/ajax/presence/reconnect.php", ctx.jar, form)
-        .then(utils.saveCookies(ctx.jar));
-    })
-    .then(function(res) {
-      log.info("login", 'Request to pull 1');
-      var form = {
-        channel : 'p_' + ctx.userID,
-        seq : 0,
-        partition : -2,
-        clientid : ctx.clientID,
-        viewer_uid : ctx.userID,
-        uid : ctx.userID,
-        state : 'active',
-        idle : 0,
-        cap : 8,
-        msgs_recv: 0
-      };
-      var presence = utils.generatePresence(ctx.userID);
-      ctx.jar.setCookie("presence=" + presence + "; path=/; domain=.facebook.com; secure", "https://www.facebook.com");
-      ctx.jar.setCookie("presence=" + presence + "; path=/; domain=.messenger.com; secure", "https://www.messenger.com");
-      ctx.jar.setCookie("locale=en_US; path=/; domain=.facebook.com; secure", "https://www.facebook.com");
-      ctx.jar.setCookie("locale=en_US; path=/; domain=.messenger.com; secure", "https://www.messenger.com");
-      ctx.jar.setCookie("a11y=" + utils.generateAccessiblityCookie() + "; path=/; domain=.facebook.com; secure", "https://www.facebook.com");
-
-      return utils
-        .get("https://0-edge-chat.facebook.com/pull", ctx.jar, form)
-        .then(utils.saveCookies(ctx.jar))
-        .then(function(res) {
-          var ret = null;
-          try {
-            ret = JSON.parse(utils.makeParsable(res.body));
-          } catch(e) {
-            throw {error: "Error inside first pull request. Received HTML instead of JSON. Logging in inside a browser might help fix this."};
-          }
-
-          return ret;
-        });
-    })
-    .then(function(resData) {
-      if (resData.t !== 'lb') throw {error: "Bad response from pull 1"};
-
-      var form = {
-        channel : 'p_' + ctx.userID,
-        seq : 0,
-        partition : -2,
-        clientid : ctx.clientID,
-        viewer_uid : ctx.userID,
-        uid : ctx.userID,
-        state : 'active',
-        idle : 0,
-        cap : 8,
-        msgs_recv:0,
-        sticky_token: resData.lb_info.sticky,
-        sticky_pool: resData.lb_info.pool,
-      };
-
-      log.info("login", "Request to pull 2");
-      return utils
-        .get("https://0-edge-chat.facebook.com/pull", ctx.jar, form)
-        .then(utils.saveCookies(ctx.jar));
-    })
-    .then(function() {
-      var form = {
-        'client' : 'mercury',
-        'folders[0]': 'inbox',
-        'last_action_timestamp' : '0'
-      };
-      log.info("login", "Request to thread_sync");
-
-      return defaultFuncs
-        .post("https://www.facebook.com/ajax/mercury/thread_sync.php", ctx.jar, form)
-        .then(utils.saveCookies(ctx.jar));
-    });
-
-  // given a pageID we log in as a page
-  if (globalOptions.pageID) {
-    mainPromise = mainPromise
-      .then(function() {
-        return utils
-          .get('https://www.facebook.com/' + ctx.globalOptions.pageID + '/messages/?section=messages&subsection=inbox', ctx.jar);
-      })
-      .then(function(resData) {
-        var url = utils.getFrom(resData.body, 'window.location.replace("https:\\/\\/www.facebook.com\\', '");').split('\\').join('');
-        url = url.substring(0, url.length - 1);
-
-        return utils
-          .get('https://www.facebook.com' + url, ctx.jar);
-      });
-  }
-
-  // At the end we call the callback or catch an exception
-  mainPromise
-    .then(function() {
-      log.info("login", 'Done logging in.');
-      return callback(null, api);
-    })
-    .catch(function(e) {
-      log.error("login", e.error || e);
-      callback(e);
-    });
-}
-
-function login(loginData, options, callback) {
-  if(utils.getType(options) === 'Function' || utils.getType(options) === 'AsyncFunction') {
-    callback = options;
-    options = {};
-  }
-
-  var globalOptions = {
-    selfListen: false,
-    listenEvents: false,
-    updatePresence: false,
-    forceLogin: false,
-    logRecordSize: defaultLogRecordSize
-  };
-
-  setOptions(globalOptions, options);
-
-  loginHelper(loginData.appState, loginData.email, loginData.password, globalOptions, callback);
-}
-
-module.exports = login;
